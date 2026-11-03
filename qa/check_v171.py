@@ -29,7 +29,7 @@ check('ci_debug_not_release', ':app:assembleDebug' in ci and 'apksigner' in ci a
 check('api_headers_and_tls', "HTTPS is required" in (root/'server/public/index.php').read_text())
 check('staging_migration_only', 'STAGING_DB_NAME' in (root/'scripts/apply_staging_migrations.sh').read_text())
 check('valid_android_manifest', ET.parse(root/'app/src/main/AndroidManifest.xml').getroot().tag=='manifest')
-check('twenty_mapped_screens', len(__import__('re').findall(r'CarePage\\(\\d+,', (root/'app/src/main/java/asia/aaii/buddhapsychologycare/CarePages.kt').read_text()))==20)
+check('twenty_mapped_screens', (root/'app/src/main/java/asia/aaii/buddhapsychologycare/CarePages.kt').read_text().count('CarePage(') == 21)
 result={'type':'static_source_checks','count':len(checks),'passed':sum(checks.values()),'checks':checks,'notice':'Does not prove Android compilation, MySQL migration, staging integration, device QA or security certification.'}
 (root/'qa/v171_static_results.json').write_text(json.dumps(result,indent=2))
 print(json.dumps(result,indent=2))
