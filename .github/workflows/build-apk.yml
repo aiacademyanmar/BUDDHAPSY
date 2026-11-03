@@ -1,0 +1,117 @@
+name: Buddha Psychology Care V1.7.2 CI (Debug + MySQL CI E2E)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'feature/**', 'v1.7.2/**']
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: bpc-v172-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Python source and consent-policy checks
+        run: |
+          python3 qa/check_source.py
+          python3 qa/check_v171.py
+      - name: Install PHP and extensions
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq php-cli php-mbstring php-mysql
+      - name: PHP syntax and admin JS checks
+        run: |
+          find server -name '*.php' -print0 | xargs -0 -n1 php -l
+          node --check server/admin/app.js
+      - name: HTTP unauthenticated and service-unavailable guard tests
+        run: |
+          python3 qa/test_http_guards.py
+          python3 qa/test_https_gate.py
+      - name: Check migration script syntax
+        run: bash -n scripts/apply_staging_migrations.sh
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Validate CI YAML and V1.7.2 source guards
+        run: |
+          python3 -m pip install --disable-pip-version-check pyyaml
+          python3 qa/check_v172.py
+  mysql-ci-e2e:
+    needs: source-security
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci_only_test_password_172
+          MYSQL_DATABASE: buddha_care
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci_only_test_password_172"
+          --health-interval=10s --health-timeout=5s --health-retries=15
+    env:
+      DB_HOST: 127.0.0.1
+      DB_NAME: buddha_care
+      DB_USER: root
+      DB_PASSWORD: ci_only_test_password_172
+      APP_ENV: development
+      RATE_LIMIT_PEPPER: ci_only_testing_pepper_12345678901234567890
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install PHP MySQL extensions and SQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq php-cli php-mbstring php-mysql default-mysql-client
+      - name: Run real MySQL migration and loopback API E2E tests (test data only)
+        run: python3 qa/mysql_ci_e2e.py
+  android-debug:
+    needs: source-security
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android 35 SDK tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.9'
+      - name: Build Android debug APK
+        env:
+          CARE_API_BASE_URL: ${{ vars.CARE_API_BASE_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CARE_API_BASE_URL:-}" ]]; then
+            CARE_API_BASE_URL='https://api.example.invalid/api'
+            echo '::warning::No staging API URL: APK will have an inactive placeholder endpoint.'
+          fi
+          [[ "$CARE_API_BASE_URL" == https://* ]] || { echo 'Must provide HTTPS API URL'; exit 2; }
+          gradle --no-daemon --stacktrace :app:assembleDebug -PcareApiBaseUrl="$CARE_API_BASE_URL"
+      - name: Verify debug APK and generate checksum
+        run: |
+          set -euo pipefail
+          APK='app/build/outputs/apk/debug/app-debug.apk'
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | grep "package: name='asia.aaii.buddhapsychologycare'"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+          sha256sum "$APK" > APK_SHA256.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: BuddhaPsychologyCare-V1.7.2-DEBUG-not-clinical
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            APK_SHA256.txt
+          retention-days: 14
+          if-no-files-found: error

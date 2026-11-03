@@ -1,0 +1,13 @@
+Options -Indexes
+RewriteEngine On
+# Some Apache/PHP-FPM deployments need Authorization forwarded explicitly.
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^ index.php [QSA,L]
+<IfModule mod_headers.c>
+ Header always set X-Content-Type-Options "nosniff"
+ Header always set Referrer-Policy "no-referrer"
+ Header always set X-Frame-Options "DENY"
+ Header always set Cache-Control "no-store"
+</IfModule>
